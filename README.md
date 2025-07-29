@@ -95,7 +95,7 @@ python train_xgboost_all.py
 
 ## 🎯 Model Performance
 
-- **Overall Accuracy**: 72.85%
+- **Overall Accuracy**: 92.73%
 - **Evaluation Metrics**: RMSE, MAE, R², MAPE
 - **True Out-of-Sample Testing**: Train on pre-2023 data, test on 2023+ data
 
