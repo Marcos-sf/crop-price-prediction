@@ -5,7 +5,6 @@ import numpy as np
 import os
 from datetime import datetime, timedelta
 import pandas as pd
-from tensorflow.keras.models import load_model
 
 router = APIRouter()
 
@@ -169,6 +168,10 @@ def forecast_prices(request: ForecastRequest):
         xgb_model = joblib.load(xgb_path)
 
     if model_choice in {"lstm", "ensemble"}:
+        try:
+            from tensorflow.keras.models import load_model  # local import to avoid global TF dependency
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"TensorFlow not available: {e}")
         lstm_path = f"app/data/processed/lstm_{crop}_{mandi}.h5"
         norm_path = f"app/data/processed/lstm_norm_{crop}_{mandi}.joblib"
         if not os.path.exists(lstm_path) or not os.path.exists(norm_path):
