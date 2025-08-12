@@ -14,16 +14,7 @@ class PredictionRequest(BaseModel):
     mandi: str
     date: str  # YYYY-MM-DD
     modal_price_lag1: float
-    modal_price_lag2: float
-    modal_price_lag3: float
-    modal_price_lag5: float
     modal_price_lag7: float
-    rolling_mean_7: float
-    rolling_std_7: float
-    day_of_year: int
-    month: int
-    month_sin: float
-    month_cos: float
     model_type: str = "ensemble"  # "xgboost", "lstm", or "ensemble"
 
 class ForecastRequest(BaseModel):
@@ -42,7 +33,6 @@ class ForecastRequest(BaseModel):
     month_sin: float
     month_cos: float
     months: int = 12
-    days: int = 7  # Number of days to forecast
     model_type: str = "ensemble"  # "xgboost", "lstm", or "ensemble"
 
 class PredictionResponse(BaseModel):
@@ -79,86 +69,35 @@ class LatestFeaturesResponse(BaseModel):
     lag7_date: str
 
 def find_column(df, possible_names):
-    """Find column by exact match first, then case insensitive"""
-    # First try exact matches
-    for name in possible_names:
-        if name in df.columns:
-            return name
-    
-    # Then try case insensitive matches
+    """Find column by matching possible names (case insensitive, with/without underscores)"""
     for col in df.columns:
-        col_lower = col.strip().lower()
+        col_clean = col.strip().lower().replace('_', ' ')
         for name in possible_names:
-            if col_lower == name.lower():
+            if col_clean == name.lower():
                 return col
     return None
 
-def load_simple_model(crop: str, mandi: str):
-    """Load simple model that matches current API structure"""
-    model_path = f"app/data/processed/simple_{crop}_{mandi}.joblib"
-    scaler_path = f"app/data/processed/simple_scaler_{crop}_{mandi}.joblib"
-    
-    if os.path.exists(model_path) and os.path.exists(scaler_path):
-        try:
-            model = joblib.load(model_path)
-            scaler = joblib.load(scaler_path)
-            return model, scaler
-        except Exception as e:
-            print(f"Error loading simple model: {e}")
-    return None, None
-
-def load_advanced_models(crop: str, mandi: str):
-    """Load new advanced high-accuracy models (>85% accuracy)"""
-    xgb_path = f"app/data/processed/xgb_advanced_{crop}_{mandi}.joblib"
-    lstm_path = f"app/data/processed/lstm_advanced_{crop}_{mandi}.h5"
-    lstm_scaler_path = f"app/data/processed/lstm_advanced_scaler_{crop}_{mandi}.joblib"
-    lstm_target_scaler_path = f"app/data/processed/lstm_advanced_target_scaler_{crop}_{mandi}.joblib"
-    weights_path = f"app/data/processed/ensemble_advanced_weights_{crop}_{mandi}.joblib"
-    
-    if all(os.path.exists(path) for path in [xgb_path, lstm_path, lstm_scaler_path, lstm_target_scaler_path, weights_path]):
-        try:
-            xgb_model = joblib.load(xgb_path)
-            lstm_model = load_model(lstm_path)
-            lstm_scaler = joblib.load(lstm_scaler_path)
-            lstm_target_scaler = joblib.load(lstm_target_scaler_path)
-            weights = joblib.load(weights_path)
-            
-            return xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights
-        except Exception as e:
-            print(f"Error loading advanced models: {e}")
-    return None, None, None, None, None
-
 def load_fast_models(crop: str, mandi: str):
-    """Load high-accuracy models with priority order: advanced > fast > simple"""
-    # First priority: New advanced models (>85% accuracy)
-    xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights = load_advanced_models(crop, mandi)
-    if xgb_model is not None:
-        return xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights
-    
-    # Second priority: Simple models for API compatibility
-    simple_model, simple_scaler = load_simple_model(crop, mandi)
-    if simple_model is not None:
-        return simple_model, None, simple_scaler, None, {'simple': 1.0}
-    
-    # Third priority: Original fast models
+    """Load fast high-accuracy models (>85% accuracy)"""
+    # Check if fast models exist
     xgb_path = f"app/data/processed/xgb_fast_{crop}_{mandi}.joblib"
     lstm_path = f"app/data/processed/lstm_fast_{crop}_{mandi}.h5"
     lstm_scaler_path = f"app/data/processed/lstm_fast_scaler_{crop}_{mandi}.joblib"
     lstm_target_scaler_path = f"app/data/processed/lstm_fast_target_scaler_{crop}_{mandi}.joblib"
     
-    if all(os.path.exists(path) for path in [xgb_path, lstm_path, lstm_scaler_path, lstm_target_scaler_path]):
-        try:
-            xgb_model = joblib.load(xgb_path)
-            lstm_model = load_model(lstm_path)
-            lstm_scaler = joblib.load(lstm_scaler_path)
-            lstm_target_scaler = joblib.load(lstm_target_scaler_path)
-            weights = {'xgb': 0.5, 'lstm': 0.5}
-            
-            return xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights
-        except Exception as e:
-            print(f"Error loading fast models: {e}")
+    if not all(os.path.exists(path) for path in [xgb_path, lstm_path, lstm_scaler_path, lstm_target_scaler_path]):
+        return None, None, None, None, None
     
-    return None, None, None, None, None
+    # Load models
+    xgb_model = joblib.load(xgb_path)
+    lstm_model = load_model(lstm_path)
+    lstm_scaler = joblib.load(lstm_scaler_path)
+    lstm_target_scaler = joblib.load(lstm_target_scaler_path)
+    
+    # Default ensemble weights (can be adjusted based on individual model performance)
+    weights = {'xgb': 0.5, 'lstm': 0.5}
+    
+    return xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights
 
 def load_ensemble_models(crop: str, mandi: str):
     """Load ensemble models and metadata (backward compatibility)"""
@@ -212,130 +151,17 @@ def predict_with_xgboost(features: np.ndarray, xgb_model):
     """Make prediction using XGBoost model"""
     return xgb_model.predict(features)
 
-def create_advanced_features_from_basic(basic_features, crop, mandi, target_size=62):
-    """Create advanced features from basic API inputs for advanced models"""
-    # This is a simplified version - in production you'd need historical data
-    # For now, we'll create approximate features based on the basic inputs
+def predict_with_ensemble(features: np.ndarray, xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights):
+    """Make ensemble prediction"""
+    lstm_pred = predict_with_lstm(features, lstm_model, lstm_scaler, lstm_target_scaler)
+    xgb_pred = predict_with_xgboost(features, xgb_model)
     
-    # Extract basic features
-    lag1, lag2, lag3, lag5, lag7 = basic_features[0:5]
-    rolling_mean_7, rolling_std_7 = basic_features[5:7]
-    day_of_year, month, month_sin, month_cos = basic_features[7:11]
-    
-    # Create extended feature set (approximation for advanced models)
-    advanced_features = []
-    
-    # Original lag features
-    advanced_features.extend([lag1, lag2, lag3, lag5, lag7])
-    
-    # Extended lag features (approximate from existing)
-    advanced_features.extend([lag7 * 0.95, lag7 * 0.9, lag7 * 0.85])  # lag14, lag21, lag30 approximations
-    
-    # Rolling statistics (multiple windows)
-    for window_factor in [0.8, 1.0, 1.2, 1.5, 2.0]:  # Different window approximations
-        advanced_features.extend([
-            rolling_mean_7 * window_factor,  # rolling_mean
-            rolling_std_7 * window_factor,   # rolling_std
-            lag1 * 0.95 * window_factor,     # rolling_min approximation
-            lag1 * 1.05 * window_factor,     # rolling_max approximation
-            rolling_mean_7 * window_factor   # rolling_median approximation
-        ])
-    
-    # Price change features
-    advanced_features.extend([
-        (lag1 - lag2) / lag2 if lag2 != 0 else 0,  # price_change_1d
-        (lag1 - lag7) / lag7 if lag7 != 0 else 0,  # price_change_7d
-        (lag1 - lag7) / lag7 if lag7 != 0 else 0   # price_change_30d approximation
-    ])
-    
-    # Volatility features
-    volatility = rolling_std_7 / rolling_mean_7 if rolling_mean_7 != 0 else 0
-    advanced_features.extend([volatility, volatility * 1.2])
-    
-    # Temporal features
-    advanced_features.extend([
-        2025,  # year (current year)
-        month, day_of_year % 31 + 1, day_of_year, 
-        (day_of_year - 1) // 7 + 1,  # week_of_year
-        (month - 1) // 3 + 1,  # quarter
-        0,  # is_weekend (assume weekday)
-        month_sin, month_cos,
-        np.sin(2 * np.pi * (day_of_year % 31 + 1) / 31),  # day_sin
-        np.cos(2 * np.pi * (day_of_year % 31 + 1) / 31),  # day_cos
-        np.sin(2 * np.pi * day_of_year / 365),  # dayofyear_sin
-        np.cos(2 * np.pi * day_of_year / 365)   # dayofyear_cos
-    ])
-    
-    # Trend features (approximate)
-    trend = (lag1 - lag7) / 7 if lag7 != 0 else 0
-    advanced_features.extend([trend, trend * 4])  # 7d and 30d trends
-    
-    # Relative position features
-    advanced_features.extend([
-        lag1 / rolling_mean_7 if rolling_mean_7 != 0 else 1,  # price_vs_7d_mean
-        lag1 / rolling_mean_7 if rolling_mean_7 != 0 else 1,  # price_vs_30d_mean
-        lag1 / (rolling_mean_7 * 1.1) if rolling_mean_7 != 0 else 1,  # price_vs_7d_max
-        lag1 / (rolling_mean_7 * 0.9) if rolling_mean_7 != 0 else 1   # price_vs_7d_min
-    ])
-    
-    # Momentum features
-    advanced_features.extend([
-        lag1 - lag3,  # momentum_3d
-        lag1 - lag7,  # momentum_7d
-        lag1 - lag7   # momentum_30d approximation
-    ])
-    
-    # Seasonal features (simplified)
-    seasonal_month = rolling_mean_7  # Approximate seasonal pattern
-    seasonal_quarter = rolling_mean_7
-    advanced_features.extend([seasonal_month, seasonal_quarter])
-    
-    # Pad or trim to expected size (adjust based on your actual advanced model feature count)
-    if len(advanced_features) < target_size:
-        # Pad with mean values
-        mean_val = np.mean(advanced_features)
-        advanced_features.extend([mean_val] * (target_size - len(advanced_features)))
-    elif len(advanced_features) > target_size:
-        # Trim to target size
-        advanced_features = advanced_features[:target_size]
-    
-    return np.array(advanced_features).reshape(1, -1)
-
-def predict_with_ensemble(features: np.ndarray, xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights, crop=None, mandi=None):
-    """Make ensemble prediction - handles both complex models and simple models"""
-    # Check if this is a simple model (single model, no LSTM)
-    if isinstance(weights, dict) and 'simple' in weights:
-        # Use simple model directly
-        features_scaled = lstm_scaler.transform(features)
-        return xgb_model.predict(features_scaled)
-    
-    # Check if we need to expand features for advanced models
-    if features.shape[1] == 11 and lstm_model is not None:
-        # This is likely an advanced model that needs more features
-        # Detect required feature count from the scaler
-        try:
-            required_features = lstm_scaler.n_features_in_
-        except:
-            required_features = 62  # Default fallback
-        
-        # Create advanced features from basic inputs
-        features = create_advanced_features_from_basic(features[0], crop, mandi, required_features)
-    
-    # Original ensemble logic for complex models
-    if lstm_model is not None:
-        lstm_pred = predict_with_lstm(features, lstm_model, lstm_scaler, lstm_target_scaler)
-        xgb_pred = predict_with_xgboost(features, xgb_model)
-        
-        # Weighted average
-        if isinstance(weights, dict):
-            ensemble_pred = weights.get('xgb', 0.5) * xgb_pred + weights.get('lstm', 0.5) * lstm_pred
-        else:
-            ensemble_pred = 0.5 * xgb_pred + 0.5 * lstm_pred
-        
-        return ensemble_pred
+    # Weighted average
+    if isinstance(weights, dict):
+        ensemble_pred = weights['xgb'] * xgb_pred + weights['lstm'] * lstm_pred
     else:
-        # Fallback to XGBoost only
-        return predict_with_xgboost(features, xgb_model)
+        ensemble_pred = weights[0] * lstm_pred + weights[1] * xgb_pred
+    return ensemble_pred
 
 @router.get("/latest-prices", response_model=LagPricesResponse)
 def get_latest_prices(
@@ -476,19 +302,14 @@ def predict_price(request: PredictionRequest):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
     
-    # Prepare features for prediction
-    features = np.array([
-        request.modal_price_lag1, request.modal_price_lag2, request.modal_price_lag3,
-        request.modal_price_lag5, request.modal_price_lag7, request.rolling_mean_7,
-        request.rolling_std_7, request.day_of_year, request.month, request.month_sin, request.month_cos
-    ]).reshape(1, -1)
+    # Prepare features (using only the features available in the request)
+    features = np.array([[request.modal_price_lag1, request.modal_price_lag7]])
     
     if model_type == "ensemble":
         # Try to load fast models first
         xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights = load_fast_models(crop, mandi)
-        ensemble_pred = predict_with_ensemble(features, xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights, request.crop, request.mandi)[0]
         if xgb_model is not None:
-            pred = float(ensemble_pred)
+            pred = float(predict_with_ensemble(features, xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights)[0])
         else:
             # Fallback to old models
             lstm_model, xgb_model, lstm_norm, weights = load_ensemble_models(crop, mandi)
@@ -581,86 +402,3 @@ def get_prediction_status():
             status["old_models_available"] += 1
     
     return status
-
-@router.post("/forecast", response_model=ForecastResponse)
-def forecast_prices(request: ForecastRequest):
-    """Generate price forecast for multiple days"""
-    crop = request.crop.lower()
-    mandi = request.mandi.lower()
-    
-    # Load models
-    xgb_model, lstm_model, lstm_scaler, lstm_target_scaler, weights = load_fast_models(crop, mandi)
-    
-    if xgb_model is None:
-        # Fallback to old models
-        try:
-            xgb_model = joblib.load(f"app/data/processed/xgb_{crop}_{mandi}.joblib")
-            lstm_model = load_model(f"app/data/processed/lstm_{crop}_{mandi}.h5")
-            
-            # Try different scaler naming conventions
-            try:
-                lstm_scaler = joblib.load(f"app/data/processed/lstm_scaler_{crop}_{mandi}.joblib")
-                lstm_target_scaler = joblib.load(f"app/data/processed/lstm_target_scaler_{crop}_{mandi}.joblib")
-            except FileNotFoundError:
-                # Fallback to old naming convention
-                lstm_scaler = joblib.load(f"app/data/processed/lstm_norm_{crop}_{mandi}.joblib")
-                lstm_target_scaler = None
-            
-            weights = {'xgb': 0.5, 'lstm': 0.5}
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=404, detail=f"Models not found for {crop} in {mandi}: {str(e)}")
-    
-    # Prepare features for forecasting
-    features = np.array([
-        request.modal_price_lag1, request.modal_price_lag2, request.modal_price_lag3,
-        request.modal_price_lag5, request.modal_price_lag7, request.rolling_mean_7,
-        request.rolling_std_7, request.day_of_year, request.month, request.month_sin, request.month_cos
-    ]).reshape(1, -1)
-    
-    # Generate monthly forecast for 12 months
-    forecast = []
-    current_features = features.copy()
-    base_date = pd.Timestamp.now()
-    
-    # Use months parameter from request, default to 12
-    months_to_forecast = getattr(request, 'months', 12)
-    
-    for month in range(months_to_forecast):
-        # Calculate future date (monthly intervals)
-        future_date = base_date + pd.DateOffset(months=month+1)
-        
-        # Update temporal features for the future month
-        new_features = current_features[0].copy()
-        new_features[7] = future_date.dayofyear  # day_of_year
-        new_features[8] = future_date.month      # month
-        new_features[9] = np.sin(2 * np.pi * future_date.month / 12)  # month_sin
-        new_features[10] = np.cos(2 * np.pi * future_date.month / 12)  # month_cos
-        current_features = new_features.reshape(1, -1)
-        
-        # Make ensemble prediction
-        ensemble_pred = predict_with_ensemble(
-            current_features, xgb_model, lstm_model, 
-            lstm_scaler, lstm_target_scaler, weights
-        )
-        
-        forecast.append({
-            "month": future_date.strftime("%B %Y"),  # "August 2025", "September 2025", etc.
-            "predicted_price": float(ensemble_pred[0]),
-            "date": future_date.strftime("%Y-%m-%d"),
-            "month_name": future_date.strftime("%B %Y"),
-            "year": future_date.year,
-            "month_number": future_date.month,
-            "sequence": month + 1  # Keep sequence number for ordering if needed
-        })
-        
-        # Update lag features with predicted price for next iteration
-        if month < months_to_forecast - 1:
-            # Shift lag prices (simulate time progression)
-            new_features[1:5] = new_features[0:4]  # lag2-5 become lag1-4
-            new_features[0] = ensemble_pred[0]     # new prediction becomes lag1
-            
-            # Update rolling statistics (simple approximation)
-            new_features[5] = ensemble_pred[0]  # rolling_mean_7 approximation
-            new_features[6] = abs(ensemble_pred[0] - new_features[1]) * 0.1  # rolling_std_7 approximation
-    
-    return ForecastResponse(forecast=forecast, model_type="ensemble")
