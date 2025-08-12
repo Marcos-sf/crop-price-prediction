@@ -16,6 +16,7 @@ const mandis = [
 const Dashboard = () => {
   const [selectedCrop, setSelectedCrop] = useState('Arecanut');
   const [selectedMandi, setSelectedMandi] = useState('Sirsi');
+  const [selectedModel, setSelectedModel] = useState('xgb');
   const [latestFeatures, setLatestFeatures] = useState(null);
   const [lagLoading, setLagLoading] = useState(false);
   const [predictionRequested, setPredictionRequested] = useState(false);
@@ -86,7 +87,8 @@ const Dashboard = () => {
           month: latestFeatures.month,
           month_sin: latestFeatures.month_sin,
           month_cos: latestFeatures.month_cos,
-          months: 12
+          months: 12,
+          model: selectedModel
         })
       });
       if (!response.ok) {
@@ -141,6 +143,19 @@ const Dashboard = () => {
             {mandis.map(mandi => (
               <MenuItem key={mandi} value={mandi}>{mandi}</MenuItem>
             ))}
+          </Select>
+        </FormControl>
+        <FormControl sx={{ minWidth: 180 }}>
+          <InputLabel id="model-select-label">Model</InputLabel>
+          <Select
+            labelId="model-select-label"
+            value={selectedModel}
+            label="Model"
+            onChange={e => setSelectedModel(e.target.value)}
+          >
+            <MenuItem value="xgb">XGBoost</MenuItem>
+            <MenuItem value="lstm">LSTM</MenuItem>
+            <MenuItem value="ensemble">Ensemble</MenuItem>
           </Select>
         </FormControl>
         <Button
